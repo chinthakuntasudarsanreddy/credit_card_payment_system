@@ -1,0 +1,111 @@
+services:
+
+  mysql:
+    image: mysql:8.0
+    container_name: credit_card_mysql
+    restart: unless-stopped
+
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: credit
+
+    ports:
+      - "3307:3306"
+
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "localhost",
+          "-uroot",
+          "-proot"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+
+  django:
+    build:
+      context: ./backend/django_backend
+
+    container_name: credit_card_django
+    restart: unless-stopped
+
+    command: >
+      sh -c "
+      python manage.py migrate &&
+      python manage.py runserver 0.0.0.0:8000
+      "
+
+    volumes:
+      - ./backend/django_backend:/app
+
+    ports:
+      - "8000:8000"
+
+    environment:
+      DB_NAME: credit
+      DB_USER: root
+      DB_PASSWORD: root
+      DB_HOST: mysql
+      DB_PORT: 3306
+
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+
+  fastapi:
+    build:
+      context: ./backend/fastapi_backend
+
+    container_name: credit_card_fastapi
+    restart: unless-stopped
+
+    volumes:
+      - ./backend/fastapi_backend:/app
+
+    ports:
+      - "8001:8001"
+
+    environment:
+      DB_NAME: credit
+      DB_USER: root
+      DB_PASSWORD: root
+      DB_HOST: mysql
+      DB_PORT: 3306
+
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+
+  frontend:
+    build:
+      context: ./frontend
+
+    container_name: credit_card_frontend
+    restart: unless-stopped
+
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+    ports:
+      - "5173:5173"
+
+    depends_on:
+      - django
+      - fastapi
+
+
+volumes:
+  mysql_data:

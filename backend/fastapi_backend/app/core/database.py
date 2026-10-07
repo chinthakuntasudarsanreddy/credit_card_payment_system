@@ -1,14 +1,51 @@
 import os
 
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
-DB_PORT = os.getenv("DB_PORT", "3306")
-DB_NAME = os.getenv("DB_NAME", "credit")
-DB_USER = os.getenv("DB_USER", "root")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+
+# ============================================================
+# LOAD ENVIRONMENT VARIABLES
+# ============================================================
+
+load_dotenv()
+
+
+# ============================================================
+# DATABASE CONFIGURATION
+# ============================================================
+
+DB_HOST = os.getenv(
+    "DB_HOST",
+    "127.0.0.1",
+)
+
+DB_PORT = os.getenv(
+    "DB_PORT",
+    "3306",
+)
+
+DB_NAME = os.getenv(
+    "DB_NAME",
+    "credit",
+)
+
+DB_USER = os.getenv(
+    "DB_USER",
+    "root",
+)
+
+DB_PASSWORD = os.getenv(
+    "DB_PASSWORD",
+    "",
+)
+
+
+# ============================================================
+# DATABASE URL
+# ============================================================
 
 DATABASE_URL = (
     f"mysql+pymysql://"
@@ -16,10 +53,20 @@ DATABASE_URL = (
     f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 )
 
+
+# ============================================================
+# SQLALCHEMY ENGINE
+# ============================================================
+
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
 )
+
+
+# ============================================================
+# DATABASE SESSION
+# ============================================================
 
 SessionLocal = sessionmaker(
     autocommit=False,
@@ -27,8 +74,17 @@ SessionLocal = sessionmaker(
     bind=engine,
 )
 
+
+# ============================================================
+# BASE MODEL
+# ============================================================
+
 Base = declarative_base()
 
+
+# ============================================================
+# DATABASE DEPENDENCY
+# ============================================================
 
 def get_db():
     db = SessionLocal()

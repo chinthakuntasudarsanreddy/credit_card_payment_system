@@ -1,58 +1,115 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import api from "../services/api";
 
-const FASTAPI_URL = "http://localhost:8001";
+const FASTAPI_URL = "http://127.0.0.1:8001";
 
 function Payment() {
+  const navigate = useNavigate();
+
   const [cards, setCards] = useState([]);
-  const [selectedCard, setSelectedCard] = useState("");
+  const [selectedCardId, setSelectedCardId] = useState("");
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState("INR");
 
   const [loadingCards, setLoadingCards] = useState(true);
-  const [paying, setPaying] = useState(false);
+  const [processing, setProcessing] = useState(false);
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-
   const [paymentResult, setPaymentResult] = useState(null);
 
-  const user = JSON.parse(localStorage.getItem("user") || "{}");
-
-  useEffect(() => {
-    loadCards();
+  const user = useMemo(() => {
+    try {
+      return JSON.parse(
+        localStorage.getItem("user") || "{}"
+      );
+    } catch {
+      return {};
+    }
   }, []);
+
+  const selectedCard = useMemo(() => {
+    return cards.find(
+      (card) =>
+        String(card.id) === String(selectedCardId)
+    );
+  }, [cards, selectedCardId]);
+
+  const getAvailableCredit = (card) => {
+    if (!card) {
+      return 0;
+    }
+
+    const creditLimit = Number(
+      card.credit_limit || 0
+    );
+
+    const successfulTransactions = 0;
+
+    if (!Number.isFinite(creditLimit)) {
+      return 0;
+    }
+
+    return Math.max(
+      0,
+      creditLimit - successfulTransactions
+    );
+  };
 
   const loadCards = async () => {
     try {
       setLoadingCards(true);
       setError("");
 
-      const response = await api.get("/api/cards/");
+      const response = await api.get(
+        "/api/cards/"
+      );
 
-      setCards(response.data);
+      const loadedCards = Array.isArray(
+        response.data
+      )
+        ? response.data
+        : [];
 
-      if (response.data.length > 0) {
-        setSelectedCard(String(response.data[0].id));
+      setCards(loadedCards);
+
+      if (loadedCards.length > 0) {
+        setSelectedCardId(
+          String(loadedCards[0].id)
+        );
+      } else {
+        setSelectedCardId("");
       }
     } catch (err) {
-      console.error("Card loading error:", err);
-
-      if (err.response?.status === 401) {
-        setError("Your login session has expired. Please login again.");
-      } else {
-        setError(
-          err.response?.data?.detail ||
-            "Unable to load your cards."
-        );
-      }
+      setError(
+        err.response?.data?.detail ||
+          "Unable to load your cards."
+      );
     } finally {
       setLoadingCards(false);
     }
   };
 
-  const handlePayment = async (event) => {
+  useEffect(() => {
+    loadCards();
+  }, []);
+
+  const handleCardChange = (event) => {
+    setSelectedCardId(event.target.value);
+    setError("");
+    setSuccess("");
+    setPaymentResult(null);
+  };
+
+  const handleAmountChange = (event) => {
+    setAmount(event.target.value);
+    setError("");
+    setSuccess("");
+    setPaymentResult(null);
+  };
+
+  const handleSubmit = async (event) => {
     event.preventDefault();
 
     setError("");
@@ -64,41 +121,65 @@ function Payment() {
       return;
     }
 
-    if (!amount || Number(amount) <= 0) {
-      setError("Please enter a valid payment amount.");
+    if (selectedCard.status !== "ACTIVE") {
+      setError(
+        "This card is BLOCKED. Please use an active card."
+      );
       return;
     }
 
-    const selectedCardData = cards.find(
-      (card) => String(card.id) === String(selectedCard)
+    const numericAmount = Number(amount);
+
+    if (
+      !Number.isFinite(numericAmount) ||
+      numericAmount <= 0
+    ) {
+      setError(
+        "Please enter a valid payment amount."
+      );
+      return;
+    }
+
+    const creditLimit = Number(
+      selectedCard.credit_limit || 0
     );
 
-    if (!selectedCardData) {
-      setError("Selected card was not found.");
+    if (
+      currency === "INR" &&
+      creditLimit > 0 &&
+      numericAmount > creditLimit
+    ) {
+      setError(
+        "Payment amount cannot exceed the card credit limit."
+      );
       return;
     }
 
+    const accessToken =
+      localStorage.getItem("access_token");
+
+    if (!accessToken) {
+      navigate("/login", { replace: true });
+      return;
+    }
+
+    setProcessing(true);
+
     try {
-      setPaying(true);
-
-      const payload = {
-        user_id: Number(user.id),
-        card_id: Number(selectedCard),
-        amount: Number(amount),
-        currency: currency,
-      };
-
-      console.log("Payment request:", payload);
-
       const response = await fetch(
         `${FASTAPI_URL}/api/payments/`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Accept: "application/json",
+            Authorization: `Bearer ${accessToken}`,
           },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({
+            user_id: Number(user.id),
+            card_id: Number(selectedCard.id),
+            amount: numericAmount.toFixed(2),
+            currency,
+          }),
         }
       );
 
@@ -108,280 +189,552 @@ function Payment() {
         throw new Error(
           data.detail ||
             data.message ||
-            "Payment processing failed."
+            "Payment could not be processed."
         );
       }
 
       setPaymentResult(data);
 
       if (data.status === "SUCCESS") {
-        setSuccess("Payment processed successfully.");
-      } else {
+        setSuccess(
+          "Payment processed successfully."
+        );
+      } else if (data.status === "FAILED") {
         setError(
           data.message ||
             "Payment processing failed."
+        );
+      } else {
+        setSuccess(
+          data.message ||
+            "Payment submitted successfully."
         );
       }
 
       setAmount("");
     } catch (err) {
-      console.error("Payment error:", err);
-
-      if (
-        err.message === "Failed to fetch" ||
-        err.name === "TypeError"
-      ) {
-        setError(
-          "Payment service is unavailable. Make sure FastAPI is running on port 8001."
-        );
-      } else {
-        setError(err.message || "Unable to process payment.");
-      }
+      setError(
+        err.message ||
+          "Unable to process payment."
+      );
     } finally {
-      setPaying(false);
+      setProcessing(false);
     }
   };
 
+  const formatCurrency = (value) => {
+    const numericValue = Number(value || 0);
+
+    return new Intl.NumberFormat(
+      "en-IN",
+      {
+        style: "currency",
+        currency: "INR",
+        maximumFractionDigits: 2,
+      }
+    ).format(numericValue);
+  };
+
+  const availableCredit = selectedCard
+    ? getAvailableCredit(selectedCard)
+    : 0;
+
+  const creditLimit = selectedCard
+    ? Number(
+        selectedCard.credit_limit || 0
+      )
+    : 0;
+
+  const creditPercentage =
+    creditLimit > 0
+      ? (availableCredit / creditLimit) * 100
+      : 0;
+
   return (
     <div className="min-h-screen bg-slate-100">
-      {/* Header */}
-      <header className="border-b bg-white shadow-sm">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-800">
-              Credit Card Payment System
-            </h1>
+      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+        {/* Page header */}
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-wide text-blue-600">
+            Secure Payment
+          </p>
 
-            <p className="text-sm text-slate-500">
-              Make a secure payment
-            </p>
-          </div>
+          <h1 className="mt-2 text-3xl font-bold text-slate-800">
+            Make a Payment
+          </h1>
 
-          <Link
-            to="/dashboard"
-            className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
-          >
-            Dashboard
-          </Link>
+          <p className="mt-2 text-slate-500">
+            Select a saved card and enter the payment
+            amount.
+          </p>
         </div>
-      </header>
 
-      {/* Main */}
-      <main className="mx-auto max-w-3xl px-6 py-10">
-        <div className="rounded-2xl bg-white p-8 shadow-lg">
-          <div className="mb-8">
-            <h2 className="text-2xl font-bold text-slate-800">
-              Payment Details
-            </h2>
-
-            <p className="mt-2 text-sm text-slate-500">
-              Select a saved card and enter the payment amount.
-            </p>
+        {/* Messages */}
+        {error && (
+          <div
+            role="alert"
+            className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700"
+          >
+            {error}
           </div>
+        )}
 
-          {/* Error */}
-          {error && (
-            <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {error}
-            </div>
-          )}
+        {success && (
+          <div
+            role="status"
+            className="mt-6 rounded-xl border border-green-200 bg-green-50 p-4 text-sm font-medium text-green-700"
+          >
+            {success}
+          </div>
+        )}
 
-          {/* Success */}
-          {success && (
-            <div className="mb-6 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
-              {success}
-            </div>
-          )}
+        <div className="mt-8 grid gap-8 lg:grid-cols-3">
+          {/* Payment form */}
+          <section className="lg:col-span-2 rounded-2xl bg-white p-6 shadow-sm sm:p-8">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-slate-800">
+                  Payment Details
+                </h2>
 
-          {/* Payment Result */}
-          {paymentResult && (
-            <div
-              className={`mb-6 rounded-xl border p-5 ${
-                paymentResult.status === "SUCCESS"
-                  ? "border-green-200 bg-green-50"
-                  : "border-red-200 bg-red-50"
-              }`}
-            >
-              <h3
-                className={`text-lg font-bold ${
-                  paymentResult.status === "SUCCESS"
-                    ? "text-green-700"
-                    : "text-red-700"
-                }`}
-              >
-                Payment {paymentResult.status}
-              </h3>
-
-              <div className="mt-3 space-y-1 text-sm text-slate-700">
-                <p>
-                  <strong>Transaction ID:</strong>{" "}
-                  {paymentResult.transaction_id}
-                </p>
-
-                <p>
-                  <strong>Amount:</strong>{" "}
-                  {paymentResult.amount}{" "}
-                  {paymentResult.currency}
-                </p>
-
-                <p>
-                  <strong>Message:</strong>{" "}
-                  {paymentResult.message}
+                <p className="mt-1 text-sm text-slate-500">
+                  Your complete card number is never
+                  displayed or stored.
                 </p>
               </div>
 
-              <Link
-                to="/transactions"
-                className="mt-4 inline-block rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
-              >
-                View Transactions
-              </Link>
+              <div className="rounded-xl bg-blue-50 px-4 py-2 text-2xl">
+                💳
+              </div>
             </div>
-          )}
 
-          {/* Payment Form */}
-          <form onSubmit={handlePayment} className="space-y-6">
-            {/* Card */}
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-slate-700">
-                Select Card
-              </label>
-
-              {loadingCards ? (
-                <div className="rounded-lg border bg-slate-50 p-4 text-sm text-slate-500">
-                  Loading cards...
+            {loadingCards ? (
+              <div className="mt-8 animate-pulse space-y-5">
+                <div className="h-4 w-24 rounded bg-slate-200" />
+                <div className="h-12 rounded-lg bg-slate-200" />
+                <div className="h-4 w-24 rounded bg-slate-200" />
+                <div className="h-12 rounded-lg bg-slate-200" />
+                <div className="h-12 rounded-lg bg-slate-200" />
+              </div>
+            ) : cards.length === 0 ? (
+              <div className="mt-8 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+                <div className="text-4xl">
+                  💳
                 </div>
-              ) : cards.length === 0 ? (
-                <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800">
-                  No cards found. Please add a card first.
-                  <br />
 
-                  <Link
-                    to="/cards"
-                    className="mt-2 inline-block font-semibold underline"
+                <h3 className="mt-3 text-lg font-bold text-slate-800">
+                  No saved cards
+                </h3>
+
+                <p className="mt-2 text-sm text-slate-500">
+                  Add a card before making a payment.
+                </p>
+
+                <Link
+                  to="/cards"
+                  className="mt-5 inline-flex rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
+                >
+                  Add Card
+                </Link>
+              </div>
+            ) : (
+              <form
+                onSubmit={handleSubmit}
+                className="mt-8 space-y-6"
+              >
+                {/* Card selection */}
+                <div>
+                  <label
+                    htmlFor="card"
+                    className="mb-2 block text-sm font-semibold text-slate-700"
                   >
-                    Add Card
-                  </Link>
+                    Select Card
+                  </label>
+
+                  <select
+                    id="card"
+                    value={selectedCardId}
+                    onChange={handleCardChange}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  >
+                    {cards.map((card) => (
+                      <option
+                        key={card.id}
+                        value={card.id}
+                      >
+                        {card.masked_card_number} -{" "}
+                        {card.card_type.toUpperCase()} -{" "}
+                        {card.status}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  {cards.map((card) => (
-                    <label
-                      key={card.id}
-                      className={`block cursor-pointer rounded-xl border p-4 transition ${
-                        String(selectedCard) === String(card.id)
-                          ? "border-blue-500 bg-blue-50 ring-2 ring-blue-100"
-                          : "border-slate-200 bg-white hover:border-slate-400"
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="radio"
-                          name="card"
-                          value={card.id}
-                          checked={
-                            String(selectedCard) ===
-                            String(card.id)
+
+                {/* Selected card preview */}
+                {selectedCard && (
+                  <div
+                    className={`rounded-2xl border p-5 ${
+                      selectedCard.status ===
+                      "ACTIVE"
+                        ? "border-blue-200 bg-blue-50"
+                        : "border-red-200 bg-red-50"
+                    }`}
+                  >
+                    <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          {selectedCard.card_type}{" "}
+                          card
+                        </p>
+
+                        <p className="mt-2 font-mono text-xl font-bold tracking-wider text-slate-800">
+                          {
+                            selectedCard.masked_card_number
                           }
-                          onChange={(e) =>
-                            setSelectedCard(e.target.value)
+                        </p>
+
+                        <p className="mt-3 text-sm font-semibold text-slate-700">
+                          {
+                            selectedCard.card_holder_name
                           }
-                          className="h-4 w-4"
-                        />
-
-                        <div className="flex-1">
-                          <p className="font-semibold text-slate-800">
-                            {card.masked_card_number}
-                          </p>
-
-                          <p className="text-sm text-slate-500">
-                            {card.card_holder_name} •{" "}
-                            {card.card_type.toUpperCase()}
-                          </p>
-
-                          <p className="text-xs text-slate-400">
-                            {String(card.expiry_month).padStart(
-                              2,
-                              "0"
-                            )}
-                            /{card.expiry_year}
-                          </p>
-                        </div>
+                        </p>
                       </div>
-                    </label>
-                  ))}
+
+                      <span
+                        className={`inline-flex w-fit rounded-full px-3 py-1 text-xs font-bold ${
+                          selectedCard.status ===
+                          "ACTIVE"
+                            ? "bg-green-100 text-green-700"
+                            : "bg-red-100 text-red-700"
+                        }`}
+                      >
+                        {selectedCard.status}
+                      </span>
+                    </div>
+
+                    <div className="mt-5 grid grid-cols-2 gap-4 border-t border-slate-200 pt-4 sm:grid-cols-4">
+                      <div>
+                        <p className="text-xs text-slate-500">
+                          Expiry
+                        </p>
+                        <p className="mt-1 font-semibold text-slate-700">
+                          {String(
+                            selectedCard.expiry_month
+                          ).padStart(2, "0")}
+                          /
+                          {
+                            selectedCard.expiry_year
+                          }
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-xs text-slate-500">
+                          Card Type
+                        </p>
+                        <p className="mt-1 font-semibold capitalize text-slate-700">
+                          {
+                            selectedCard.card_type
+                          }
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-xs text-slate-500">
+                          Credit Limit
+                        </p>
+                        <p className="mt-1 font-semibold text-slate-700">
+                          {formatCurrency(
+                            creditLimit
+                          )}
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-xs text-slate-500">
+                          Available
+                        </p>
+                        <p className="mt-1 font-semibold text-green-700">
+                          {formatCurrency(
+                            availableCredit
+                          )}
+                        </p>
+                      </div>
+                    </div>
+
+                    {selectedCard.status !==
+                      "ACTIVE" && (
+                      <div className="mt-4 rounded-lg bg-red-100 p-3 text-sm font-medium text-red-700">
+                        This card is blocked and
+                        cannot be used for payments.
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Amount */}
+                <div>
+                  <label
+                    htmlFor="amount"
+                    className="mb-2 block text-sm font-semibold text-slate-700"
+                  >
+                    Amount
+                  </label>
+
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 font-semibold text-slate-500">
+                      {currency === "INR"
+                        ? "₹"
+                        : "$"}
+                    </span>
+
+                    <input
+                      id="amount"
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={amount}
+                      onChange={handleAmountChange}
+                      placeholder="Enter amount"
+                      disabled={
+                        processing ||
+                        !selectedCard ||
+                        selectedCard.status !==
+                          "ACTIVE"
+                      }
+                      required
+                      className="w-full rounded-lg border border-slate-300 py-3 pl-10 pr-4 text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100"
+                    />
+                  </div>
+
+                  {currency === "INR" &&
+                    selectedCard &&
+                    creditLimit > 0 && (
+                      <p className="mt-2 text-xs text-slate-500">
+                        Available credit:{" "}
+                        <span className="font-semibold text-slate-700">
+                          {formatCurrency(
+                            availableCredit
+                          )}
+                        </span>
+                      </p>
+                    )}
                 </div>
-              )}
-            </div>
 
-            {/* Amount */}
-            <div>
-              <label
-                htmlFor="amount"
-                className="mb-2 block text-sm font-semibold text-slate-700"
-              >
-                Amount
-              </label>
+                {/* Currency */}
+                <div>
+                  <label
+                    htmlFor="currency"
+                    className="mb-2 block text-sm font-semibold text-slate-700"
+                  >
+                    Currency
+                  </label>
 
-              <input
-                id="amount"
-                type="number"
-                min="0.01"
-                step="0.01"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                placeholder="Enter amount"
-                className="w-full rounded-lg border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              />
-            </div>
+                  <select
+                    id="currency"
+                    value={currency}
+                    onChange={(event) =>
+                      setCurrency(
+                        event.target.value
+                      )
+                    }
+                    disabled={processing}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
+                  >
+                    <option value="INR">
+                      INR - Indian Rupee
+                    </option>
+                    <option value="USD">
+                      USD - US Dollar
+                    </option>
+                  </select>
+                </div>
 
-            {/* Currency */}
-            <div>
-              <label
-                htmlFor="currency"
-                className="mb-2 block text-sm font-semibold text-slate-700"
-              >
-                Currency
-              </label>
+                {/* Submit */}
+                <button
+                  type="submit"
+                  disabled={
+                    processing ||
+                    !selectedCard ||
+                    selectedCard.status !==
+                      "ACTIVE"
+                  }
+                  className="w-full rounded-xl bg-blue-600 px-5 py-3.5 font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {processing
+                    ? "Processing Payment..."
+                    : "Pay Now"}
+                </button>
 
-              <select
-                id="currency"
-                value={currency}
-                onChange={(e) => setCurrency(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              >
-                <option value="INR">
-                  INR - Indian Rupee
-                </option>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                  <p className="font-semibold text-slate-700">
+                    🔒 Security
+                  </p>
 
-                <option value="USD">
-                  USD - US Dollar
-                </option>
-              </select>
-            </div>
+                  <p className="mt-1">
+                    Your full card number and CVV
+                    are never stored by this
+                    application.
+                  </p>
+                </div>
+              </form>
+            )}
+          </section>
 
-            {/* Security */}
-            <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
-              <p className="text-sm text-blue-800">
-                <strong>Security:</strong> Your full card
-                number and CVV are not sent to the payment
-                service.
+          {/* Summary */}
+          <aside className="space-y-6">
+            {selectedCard && (
+              <section className="rounded-2xl bg-white p-6 shadow-sm">
+                <h2 className="text-lg font-bold text-slate-800">
+                  Credit Summary
+                </h2>
+
+                <div className="mt-5 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-slate-500">
+                      Credit Limit
+                    </span>
+                    <span className="font-bold text-slate-800">
+                      {formatCurrency(
+                        creditLimit
+                      )}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-slate-500">
+                      Available
+                    </span>
+                    <span className="font-bold text-green-600">
+                      {formatCurrency(
+                        availableCredit
+                      )}
+                    </span>
+                  </div>
+
+                  <div>
+                    <div className="mb-2 flex justify-between text-xs">
+                      <span className="text-slate-500">
+                        Available credit
+                      </span>
+
+                      <span className="font-semibold text-slate-700">
+                        {creditPercentage.toFixed(
+                          1
+                        )}
+                        %
+                      </span>
+                    </div>
+
+                    <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+                      <div
+                        className={`h-full rounded-full transition-all ${
+                          creditPercentage <
+                          10
+                            ? "bg-red-500"
+                            : creditPercentage <
+                              30
+                            ? "bg-yellow-500"
+                            : "bg-green-500"
+                        }`}
+                        style={{
+                          width: `${Math.min(
+                            100,
+                            Math.max(
+                              0,
+                              creditPercentage
+                            )
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {paymentResult && (
+              <section className="rounded-2xl bg-white p-6 shadow-sm">
+                <h2 className="text-lg font-bold text-slate-800">
+                  Payment Result
+                </h2>
+
+                <div
+                  className={`mt-4 rounded-xl p-4 ${
+                    paymentResult.status ===
+                    "SUCCESS"
+                      ? "bg-green-50"
+                      : "bg-red-50"
+                  }`}
+                >
+                  <p
+                    className={`text-lg font-bold ${
+                      paymentResult.status ===
+                      "SUCCESS"
+                        ? "text-green-700"
+                        : "text-red-700"
+                    }`}
+                  >
+                    {paymentResult.status}
+                  </p>
+
+                  <p className="mt-2 text-sm text-slate-600">
+                    {paymentResult.message}
+                  </p>
+                </div>
+
+                <div className="mt-4 space-y-3 text-sm">
+                  <div>
+                    <p className="text-xs text-slate-400">
+                      Transaction ID
+                    </p>
+
+                    <p className="mt-1 break-all font-mono text-xs font-semibold text-slate-700">
+                      {
+                        paymentResult.transaction_id
+                      }
+                    </p>
+                  </div>
+
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">
+                      Amount
+                    </span>
+
+                    <span className="font-semibold text-slate-800">
+                      {paymentResult.currency}{" "}
+                      {paymentResult.amount}
+                    </span>
+                  </div>
+                </div>
+
+                <Link
+                  to="/transactions"
+                  className="mt-5 block rounded-lg bg-slate-900 px-4 py-3 text-center text-sm font-semibold text-white hover:bg-slate-800"
+                >
+                  View Transactions
+                </Link>
+              </section>
+            )}
+
+            <section className="rounded-2xl border border-blue-200 bg-blue-50 p-6">
+              <h2 className="font-bold text-blue-900">
+                Need a different card?
+              </h2>
+
+              <p className="mt-2 text-sm text-blue-800">
+                Add or manage your saved cards from
+                the My Cards section.
               </p>
-            </div>
 
-            {/* Submit */}
-            <button
-              type="submit"
-              disabled={
-                paying ||
-                loadingCards ||
-                cards.length === 0
-              }
-              className="w-full rounded-lg bg-blue-600 px-5 py-3 font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-400"
-            >
-              {paying ? "Processing Payment..." : "Pay Now"}
-            </button>
-          </form>
+              <Link
+                to="/cards"
+                className="mt-4 inline-flex rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
+              >
+                Manage Cards
+              </Link>
+            </section>
+          </aside>
         </div>
       </main>
     </div>

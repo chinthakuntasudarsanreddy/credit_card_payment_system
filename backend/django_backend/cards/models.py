@@ -8,6 +8,11 @@ class Card(models.Model):
         ("debit", "Debit"),
     )
 
+    STATUS_CHOICES = (
+        ("ACTIVE", "Active"),
+        ("BLOCKED", "Blocked"),
+    )
+
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -33,6 +38,18 @@ class Card(models.Model):
     card_type = models.CharField(
         max_length=10,
         choices=CARD_TYPE_CHOICES,
+    )
+
+    status = models.CharField(
+        max_length=10,
+        choices=STATUS_CHOICES,
+        default="ACTIVE",
+    )
+
+    credit_limit = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=100000.00,
     )
 
     created_at = models.DateTimeField(

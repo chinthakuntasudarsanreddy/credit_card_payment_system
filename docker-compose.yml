@@ -57,6 +57,7 @@ services:
       DB_PASSWORD: root
       DB_HOST: mysql
       DB_PORT: 3306
+      INTERNAL_API_KEY: credit-internal-notification-key-2026
 
     depends_on:
       mysql:
@@ -82,10 +83,14 @@ services:
       DB_PASSWORD: root
       DB_HOST: mysql
       DB_PORT: 3306
+      DJANGO_BASE_URL: http://django:8000
+      INTERNAL_API_KEY: credit-internal-notification-key-2026
 
     depends_on:
       mysql:
         condition: service_healthy
+      django:
+        condition: service_started
 
 
   frontend:

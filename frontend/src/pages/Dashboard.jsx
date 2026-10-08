@@ -1,70 +1,67 @@
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 
-const FASTAPI_URL = "http://127.0.0.1:8001";
+import { useEffect, useState } from "react";
+import { useTheme } from "../context/ThemeContext";
+import api from "../services/api";
+
+const FASTAPI_URL = "http://localhost:8001";
 
 function Dashboard() {
-  const navigate = useNavigate();
+  const { darkMode, toggleDarkMode } = useTheme();
 
-  const [summary, setSummary] = useState(null);
+  const [summary, setSummary] = useState({
+    total_transactions: 0,
+    total_amount_spent: "0.00",
+    current_month_spending: "0.00",
+    available_credit_limit: "0.00",
+    last_5_transactions: [],
+  });
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const fetchDashboard = async () => {
-    setLoading(true);
-    setError("");
-
-    const accessToken = localStorage.getItem("access_token");
-
-    if (!accessToken) {
-      setError("Your session has expired. Please login again.");
-      setLoading(false);
-      navigate("/login");
-      return;
-    }
-
+  const fetchDashboardSummary = async () => {
     try {
-      const response = await fetch(
-        `${FASTAPI_URL}/dashboard/summary`,
-        {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${accessToken}`,
-          },
-        }
-      );
+      setLoading(true);
+      setError("");
 
-      if (response.status === 401) {
-        localStorage.removeItem("access_token");
-        localStorage.removeItem("refresh_token");
-        localStorage.removeItem("user");
+      const accessToken = localStorage.getItem("access_token");
 
-        setError("Your session has expired. Please login again.");
-        setLoading(false);
-
-        navigate("/login");
-        return;
+      if (!accessToken) {
+        throw new Error("No access token found. Please login again.");
       }
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-
-        throw new Error(
-          errorData.detail ||
-            `Dashboard request failed with status ${response.status}`
-        );
-      }
+      const response = await fetch(`${FASTAPI_URL}/dashboard/summary`, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
 
       const data = await response.json();
 
-      setSummary(data);
+      if (!response.ok) {
+        throw new Error(
+          data.detail || `Dashboard API returned ${response.status}`
+        );
+      }
+
+      console.log("Dashboard API response:", data);
+
+      setSummary({
+        total_transactions: Number(data.total_transactions ?? 0),
+        total_amount_spent: data.total_amount_spent ?? "0.00",
+        current_month_spending: data.current_month_spending ?? "0.00",
+        available_credit_limit: data.available_credit_limit ?? "0.00",
+        last_5_transactions: Array.isArray(data.last_5_transactions)
+          ? data.last_5_transactions
+          : [],
+      });
     } catch (err) {
-      console.error("Dashboard error:", err);
+      console.error("Dashboard API error:", err);
 
       setError(
-        err.message ||
-          "Unable to load dashboard. Please check whether FastAPI is running."
+        err.message || "Unable to load dashboard data."
       );
     } finally {
       setLoading(false);
@@ -72,31 +69,26 @@ function Dashboard() {
   };
 
   useEffect(() => {
-    fetchDashboard();
+    fetchDashboardSummary();
   }, []);
 
-  const formatCurrency = (value) => {
-    const amount = Number(value || 0);
-
-    return new Intl.NumberFormat("en-IN", {
-      style: "currency",
-      currency: "INR",
+  const formatAmount = (amount) => {
+    return Number(amount || 0).toLocaleString("en-IN", {
+      minimumFractionDigits: 2,
       maximumFractionDigits: 2,
-    }).format(amount);
+    });
   };
 
-  const formatDate = (dateValue) => {
-    if (!dateValue) {
+  const formatDate = (date) => {
+    if (!date) return "-";
+
+    const parsedDate = new Date(date);
+
+    if (Number.isNaN(parsedDate.getTime())) {
       return "-";
     }
 
-    const date = new Date(dateValue);
-
-    if (Number.isNaN(date.getTime())) {
-      return dateValue;
-    }
-
-    return date.toLocaleString("en-IN", {
+    return parsedDate.toLocaleString("en-IN", {
       dateStyle: "medium",
       timeStyle: "short",
     });
@@ -105,284 +97,223 @@ function Dashboard() {
   const getStatusClass = (status) => {
     switch (status) {
       case "SUCCESS":
-        return "bg-green-100 text-green-700";
+        return "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300";
 
       case "FAILED":
-        return "bg-red-100 text-red-700";
+        return "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300";
 
       case "PENDING":
-        return "bg-yellow-100 text-yellow-700";
+        return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300";
 
       default:
-        return "bg-gray-100 text-gray-700";
+        return "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-100 p-6">
-        <div className="mx-auto max-w-7xl">
-          <div className="mb-8">
-            <div className="h-8 w-64 animate-pulse rounded bg-gray-300"></div>
-            <div className="mt-3 h-4 w-96 animate-pulse rounded bg-gray-300"></div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-            {[1, 2, 3, 4].map((item) => (
-              <div
-                key={item}
-                className="h-32 animate-pulse rounded-xl bg-white p-6 shadow"
-              >
-                <div className="h-4 w-28 rounded bg-gray-300"></div>
-                <div className="mt-5 h-8 w-36 rounded bg-gray-300"></div>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-8 animate-pulse rounded-xl bg-white p-6 shadow">
-            <div className="h-6 w-56 rounded bg-gray-300"></div>
-
-            <div className="mt-6 space-y-4">
-              {[1, 2, 3, 4, 5].map((item) => (
-                <div
-                  key={item}
-                  className="h-12 rounded bg-gray-200"
-                ></div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (error && !summary) {
-    return (
-      <div className="min-h-screen bg-gray-100 p-6">
-        <div className="mx-auto max-w-2xl">
-          <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center">
-            <h2 className="text-xl font-semibold text-red-700">
-              Unable to load dashboard
-            </h2>
-
-            <p className="mt-3 text-red-600">{error}</p>
-
-            <button
-              onClick={fetchDashboard}
-              className="mt-5 rounded-lg bg-blue-600 px-5 py-2.5 font-medium text-white hover:bg-blue-700"
-            >
-              Try Again
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const transactions = summary?.last_5_transactions || [];
-
   return (
-    <div className="min-h-screen bg-gray-100 p-4 sm:p-6">
+    <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-900 transition-colors duration-300 dark:bg-slate-950 dark:text-slate-100">
       <div className="mx-auto max-w-7xl">
+
         {/* Header */}
-        <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+        <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">
+            <h1 className="text-3xl font-bold tracking-tight">
               Dashboard
             </h1>
 
-            <p className="mt-1 text-gray-600">
+            <p className="mt-1 text-slate-600 dark:text-slate-400">
               Overview of your credit card activity
             </p>
           </div>
 
-          <button
-            onClick={fetchDashboard}
-            className="rounded-lg bg-blue-600 px-5 py-2.5 font-medium text-white transition hover:bg-blue-700"
-          >
-            Refresh
-          </button>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={toggleDarkMode}
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              {darkMode ? "☀️ Light Mode" : "🌙 Dark Mode"}
+            </button>
+
+            <button
+              type="button"
+              onClick={fetchDashboardSummary}
+              disabled={loading}
+              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {loading ? "Loading..." : "Refresh"}
+            </button>
+          </div>
         </div>
 
-        {/* Error banner */}
+        {/* Error */}
         {error && (
-          <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-700">
-            {error}
+          <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300">
+            <strong>Dashboard Error:</strong> {error}
           </div>
         )}
 
-        {/* Statistics Cards */}
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          {/* Total Spent */}
-          <div className="rounded-xl bg-white p-6 shadow-sm">
-            <p className="text-sm font-medium text-gray-500">
-              Total Spent
-            </p>
+        {/* Statistics */}
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
 
-            <p className="mt-3 text-2xl font-bold text-gray-900">
-              {formatCurrency(summary?.total_amount_spent)}
+          {/* Total Spent */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
+            <div className="mb-4 flex items-center justify-between">
+              <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
+                Total Spent
+              </p>
+
+              <span className="rounded-lg bg-blue-100 px-3 py-2 text-lg dark:bg-blue-900/40">
+                ₹
+              </span>
+            </div>
+
+            <p className="text-3xl font-bold">
+              ₹{formatAmount(summary.total_amount_spent)}
             </p>
           </div>
 
           {/* Available Credit */}
-          <div className="rounded-xl bg-white p-6 shadow-sm">
-            <p className="text-sm font-medium text-gray-500">
-              Available Credit
-            </p>
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
+            <div className="mb-4 flex items-center justify-between">
+              <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
+                Available Credit
+              </p>
 
-            <p className="mt-3 text-2xl font-bold text-green-600">
-              {formatCurrency(summary?.available_credit_limit)}
+              <span className="rounded-lg bg-green-100 px-3 py-2 text-lg dark:bg-green-900/40">
+                ✓
+              </span>
+            </div>
+
+            <p className="text-3xl font-bold">
+              ₹{formatAmount(summary.available_credit_limit)}
             </p>
           </div>
 
           {/* Total Transactions */}
-          <div className="rounded-xl bg-white p-6 shadow-sm">
-            <p className="text-sm font-medium text-gray-500">
-              Total Transactions
-            </p>
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
+            <div className="mb-4 flex items-center justify-between">
+              <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
+                Total Transactions
+              </p>
 
-            <p className="mt-3 text-2xl font-bold text-gray-900">
-              {summary?.total_transactions ?? 0}
+              <span className="rounded-lg bg-purple-100 px-3 py-2 text-lg dark:bg-purple-900/40">
+                #
+              </span>
+            </div>
+
+            <p className="text-3xl font-bold">
+              {summary.total_transactions}
             </p>
           </div>
 
-          {/* Current Month */}
-          <div className="rounded-xl bg-white p-6 shadow-sm">
-            <p className="text-sm font-medium text-gray-500">
-              This Month Spending
-            </p>
+          {/* Monthly Spending */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
+            <div className="mb-4 flex items-center justify-between">
+              <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
+                This Month Spending
+              </p>
 
-            <p className="mt-3 text-2xl font-bold text-blue-600">
-              {formatCurrency(summary?.current_month_spending)}
+              <span className="rounded-lg bg-orange-100 px-3 py-2 text-lg dark:bg-orange-900/40">
+                📅
+              </span>
+            </div>
+
+            <p className="text-3xl font-bold">
+              ₹{formatAmount(summary.current_month_spending)}
             </p>
           </div>
         </div>
 
         {/* Last 5 Transactions */}
-        <div className="mt-8 rounded-xl bg-white shadow-sm">
-          <div className="border-b border-gray-200 px-6 py-5">
-            <h2 className="text-xl font-semibold text-gray-900">
+        <section className="mt-8 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+
+          <div className="border-b border-slate-200 px-6 py-5 dark:border-slate-800">
+            <h2 className="text-xl font-bold">
               Last 5 Transactions
             </h2>
 
-            <p className="mt-1 text-sm text-gray-500">
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
               Your most recent payment activity
             </p>
           </div>
 
-          {transactions.length === 0 ? (
-            <div className="px-6 py-10 text-center text-gray-500">
+          {loading ? (
+            <div className="space-y-4 p-6">
+              {[1, 2, 3, 4, 5].map((item) => (
+                <div
+                  key={item}
+                  className="h-12 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800"
+                />
+              ))}
+            </div>
+          ) : summary.last_5_transactions.length === 0 ? (
+            <div className="px-6 py-12 text-center text-slate-500 dark:text-slate-400">
               No transactions found.
             </div>
           ) : (
-            <>
-              {/* Desktop Table */}
-              <div className="hidden overflow-x-auto md:block">
-                <table className="w-full">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-600">
-                        Amount
-                      </th>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[700px]">
 
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-600">
-                        Card
-                      </th>
+                <thead className="bg-slate-50 dark:bg-slate-800/60">
+                  <tr>
+                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                      Amount
+                    </th>
 
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-600">
-                        Date
-                      </th>
+                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                      Card
+                    </th>
 
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-600">
-                        Status
-                      </th>
+                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                      Date
+                    </th>
+
+                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                      Status
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                  {summary.last_5_transactions.map((transaction, index) => (
+                    <tr
+                      key={`${transaction.date}-${index}`}
+                      className="transition hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                    >
+                      <td className="px-6 py-4 font-semibold">
+                        ₹{formatAmount(transaction.amount)}
+                      </td>
+
+                      <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-300">
+                        {transaction.masked_card_number || "N/A"}
+                      </td>
+
+                      <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-300">
+                        {formatDate(transaction.date)}
+                      </td>
+
+                      <td className="px-6 py-4">
+                        <span
+                          className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(
+                            transaction.status
+                          )}`}
+                        >
+                          {transaction.status}
+                        </span>
+                      </td>
                     </tr>
-                  </thead>
+                  ))}
+                </tbody>
 
-                  <tbody className="divide-y divide-gray-100">
-                    {transactions.map((transaction, index) => (
-                      <tr
-                        key={`${transaction.date}-${index}`}
-                        className="hover:bg-gray-50"
-                      >
-                        <td className="px-6 py-4 font-semibold text-gray-900">
-                          {formatCurrency(transaction.amount)}
-                        </td>
-
-                        <td className="px-6 py-4 text-gray-600">
-                          {transaction.masked_card_number || "-"}
-                        </td>
-
-                        <td className="px-6 py-4 text-gray-600">
-                          {formatDate(transaction.date)}
-                        </td>
-
-                        <td className="px-6 py-4">
-                          <span
-                            className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(
-                              transaction.status
-                            )}`}
-                          >
-                            {transaction.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Mobile Cards */}
-              <div className="space-y-4 p-4 md:hidden">
-                {transactions.map((transaction, index) => (
-                  <div
-                    key={`${transaction.date}-${index}`}
-                    className="rounded-lg border border-gray-200 p-4"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-lg font-bold text-gray-900">
-                        {formatCurrency(transaction.amount)}
-                      </span>
-
-                      <span
-                        className={`rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(
-                          transaction.status
-                        )}`}
-                      >
-                        {transaction.status}
-                      </span>
-                    </div>
-
-                    <div className="mt-4 space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">
-                          Card
-                        </span>
-
-                        <span className="font-medium text-gray-800">
-                          {transaction.masked_card_number || "-"}
-                        </span>
-                      </div>
-
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">
-                          Date
-                        </span>
-
-                        <span className="font-medium text-gray-800">
-                          {formatDate(transaction.date)}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
+              </table>
+            </div>
           )}
-        </div>
+        </section>
       </div>
-    </div>
+    </main>
   );
 }
 
 export default Dashboard;
+

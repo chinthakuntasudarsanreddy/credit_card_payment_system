@@ -16,7 +16,7 @@ app = FastAPI(
 
 
 # ============================================================
-# CORS
+# CORS CONFIGURATION
 # ============================================================
 
 app.add_middleware(
@@ -32,7 +32,7 @@ app.add_middleware(
 
 
 # ============================================================
-# PAYMENT ROUTES
+# ROUTERS
 # ============================================================
 
 app.include_router(
@@ -40,11 +40,6 @@ app.include_router(
     prefix="/api/payments",
     tags=["Payments"],
 )
-
-
-# ============================================================
-# DASHBOARD ROUTES
-# ============================================================
 
 app.include_router(
     dashboard_router,
@@ -63,6 +58,10 @@ def root():
         "message": "Credit Card Payment FastAPI is running."
     }
 
+
+# ============================================================
+# HEALTH CHECK
+# ============================================================
 
 @app.get("/health")
 def health_check():

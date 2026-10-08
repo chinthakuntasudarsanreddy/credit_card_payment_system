@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 
 from dotenv import load_dotenv
+from datetime import timedelta
 
 
 # ============================================================
@@ -30,6 +31,7 @@ DEBUG = os.getenv(
 ALLOWED_HOSTS = [
     "127.0.0.1",
     "localhost",
+    "django",
 ]
 
 
@@ -56,6 +58,8 @@ INSTALLED_APPS = [
     "cards",
     "transactions",
     "admin_logs",
+    "notifications",
+    "statements",
 ]
 
 
@@ -156,9 +160,10 @@ DATABASES = {
 
         "HOST": os.getenv(
             "DB_HOST",
-            "127.0.0.1",
+            "localhost",
         ),
 
+        # KEEP 3306
         "PORT": os.getenv(
             "DB_PORT",
             "3306",
@@ -268,22 +273,25 @@ SPECTACULAR_SETTINGS = {
 
     "DESCRIPTION": (
         "Django API for authentication, "
-        "card management and transaction management."
+        "card management, transaction management, "
+        "notifications and monthly statements."
     ),
 
     "VERSION": "1.0.0",
 }
+
+
 # ============================================================
 # JWT CONFIGURATION
 # ============================================================
 
-from datetime import timedelta
-
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(hours=2),
+
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
 
     "ROTATE_REFRESH_TOKENS": False,
+
     "BLACKLIST_AFTER_ROTATION": False,
 
     "UPDATE_LAST_LOGIN": True,
@@ -295,6 +303,7 @@ SIMPLE_JWT = {
     "AUTH_HEADER_NAME": "HTTP_AUTHORIZATION",
 
     "USER_ID_FIELD": "id",
+
     "USER_ID_CLAIM": "user_id",
 
     "TOKEN_TYPE_CLAIM": "token_type",
@@ -302,5 +311,58 @@ SIMPLE_JWT = {
     "JTI_CLAIM": "jti",
 
     "SLIDING_TOKEN_LIFETIME": timedelta(minutes=5),
+
     "SLIDING_TOKEN_REFRESH_LIFETIME": timedelta(days=1),
 }
+
+
+# ============================================================
+# EMAIL CONFIGURATION
+# ============================================================
+
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.console.EmailBackend",
+)
+
+EMAIL_HOST = os.getenv(
+    "EMAIL_HOST",
+    "",
+)
+
+EMAIL_PORT = int(
+    os.getenv(
+        "EMAIL_PORT",
+        "587",
+    )
+)
+
+EMAIL_USE_TLS = os.getenv(
+    "EMAIL_USE_TLS",
+    "True",
+).lower() == "true"
+
+EMAIL_HOST_USER = os.getenv(
+    "EMAIL_HOST_USER",
+    "",
+)
+
+EMAIL_HOST_PASSWORD = os.getenv(
+    "EMAIL_HOST_PASSWORD",
+    "",
+)
+
+DEFAULT_FROM_EMAIL = os.getenv(
+    "DEFAULT_FROM_EMAIL",
+    EMAIL_HOST_USER,
+)
+
+
+# ============================================================
+# INTERNAL NOTIFICATION API
+# ============================================================
+
+INTERNAL_API_KEY = os.getenv(
+    "INTERNAL_API_KEY",
+    "credit-internal-notification-key-2026",
+)

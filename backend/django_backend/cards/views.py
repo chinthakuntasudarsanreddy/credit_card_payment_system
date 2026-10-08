@@ -11,6 +11,8 @@ from .serializers import (
     CardSerializer,
 )
 
+from notifications.services import send_card_blocked_alert
+
 
 class CardListCreateView(APIView):
     permission_classes = [IsAuthenticated]
@@ -114,6 +116,91 @@ class CardDetailView(APIView):
         return Response(
             {
                 "message": "Card deleted successfully."
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class CardStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, card_id):
+        try:
+            card = Card.objects.get(
+                id=card_id,
+                user=request.user,
+            )
+        except Card.DoesNotExist:
+            return Response(
+                {
+                    "detail": "Card not found."
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        new_status = str(
+            request.data.get("status", "")
+        ).upper()
+
+        if new_status not in {
+            "ACTIVE",
+            "BLOCKED",
+        }:
+            return Response(
+                {
+                    "detail": (
+                        "Invalid status. "
+                        "Use ACTIVE or BLOCKED."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        old_status = card.status
+
+        card.status = new_status
+        card.save(
+            update_fields=[
+                "status",
+                "updated_at",
+            ]
+        )
+
+        notification_sent = False
+
+        # Send email only when the card actually
+        # changes from ACTIVE to BLOCKED.
+        if (
+            old_status != "BLOCKED"
+            and new_status == "BLOCKED"
+        ):
+            try:
+                notification_sent = (
+                    send_card_blocked_alert(card)
+                )
+            except Exception as exc:
+                return Response(
+                    {
+                        "message": (
+                            "Card was blocked, "
+                            "but the notification "
+                            "could not be sent."
+                        ),
+                        "card": CardSerializer(card).data,
+                        "notification_sent": False,
+                        "error": str(exc),
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+        return Response(
+            {
+                "message": (
+                    f"Card status changed to "
+                    f"{new_status}."
+                ),
+                "card": CardSerializer(card).data,
+                "notification_sent": notification_sent,
             },
             status=status.HTTP_200_OK,
         )

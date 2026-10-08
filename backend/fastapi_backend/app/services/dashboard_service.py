@@ -7,10 +7,14 @@ from sqlalchemy.orm import Session
 DEFAULT_CREDIT_LIMIT = Decimal("100000.00")
 
 
-def get_dashboard_summary(db: Session):
+def get_dashboard_summary(
+    db: Session,
+    user_id: int,
+):
     # ============================================================
     # TOTAL TRANSACTIONS
     # Only successful transactions are treated as spending.
+    # Only the authenticated user's transactions are counted.
     # ============================================================
 
     total_transactions = db.execute(
@@ -18,9 +22,13 @@ def get_dashboard_summary(db: Session):
             """
             SELECT COUNT(*)
             FROM transactions_transaction
-            WHERE status = 'SUCCESS'
+            WHERE user_id = :user_id
+              AND status = 'SUCCESS'
             """
-        )
+        ),
+        {
+            "user_id": user_id,
+        },
     ).scalar() or 0
 
     # ============================================================
@@ -32,9 +40,13 @@ def get_dashboard_summary(db: Session):
             """
             SELECT COALESCE(SUM(amount), 0)
             FROM transactions_transaction
-            WHERE status = 'SUCCESS'
+            WHERE user_id = :user_id
+              AND status = 'SUCCESS'
             """
-        )
+        ),
+        {
+            "user_id": user_id,
+        },
     ).scalar()
 
     if total_amount_spent is None:
@@ -49,11 +61,15 @@ def get_dashboard_summary(db: Session):
             """
             SELECT COALESCE(SUM(amount), 0)
             FROM transactions_transaction
-            WHERE status = 'SUCCESS'
+            WHERE user_id = :user_id
+              AND status = 'SUCCESS'
               AND YEAR(created_at) = YEAR(CURDATE())
               AND MONTH(created_at) = MONTH(CURDATE())
             """
-        )
+        ),
+        {
+            "user_id": user_id,
+        },
     ).scalar()
 
     if current_month_spending is None:
@@ -62,12 +78,16 @@ def get_dashboard_summary(db: Session):
     # ============================================================
     # AVAILABLE CREDIT LIMIT
     #
-    # Current Card model/database does not contain a credit limit.
-    # Therefore we use the configured default credit limit.
+    # Current Card model does not contain a credit limit.
+    # Therefore the configured default credit limit is used.
+    #
+    # This calculation is based on the authenticated user's
+    # current-month successful spending.
     # ============================================================
 
     available_credit_limit = (
-        DEFAULT_CREDIT_LIMIT - Decimal(str(current_month_spending))
+        DEFAULT_CREDIT_LIMIT
+        - Decimal(str(current_month_spending))
     )
 
     if available_credit_limit < Decimal("0.00"):
@@ -76,8 +96,8 @@ def get_dashboard_summary(db: Session):
     # ============================================================
     # LAST 5 TRANSACTIONS
     #
-    # The card table is joined so that we can return the masked
-    # card number.
+    # Only the authenticated user's transactions are returned.
+    # The card table is joined to get the masked card number.
     # ============================================================
 
     rows = db.execute(
@@ -91,10 +111,14 @@ def get_dashboard_summary(db: Session):
             FROM transactions_transaction t
             LEFT JOIN cards_card c
                 ON t.card_id = c.id
+            WHERE t.user_id = :user_id
             ORDER BY t.created_at DESC
             LIMIT 5
             """
-        )
+        ),
+        {
+            "user_id": user_id,
+        },
     ).mappings().all()
 
     last_5_transactions = []
@@ -103,10 +127,16 @@ def get_dashboard_summary(db: Session):
         last_5_transactions.append(
             {
                 "amount": str(row["amount"]),
-                "masked_card_number": row["masked_card_number"],
-                "date": row["created_at"].isoformat()
-                if row["created_at"]
-                else None,
+                "masked_card_number": (
+                    row["masked_card_number"]
+                    if row["masked_card_number"]
+                    else None
+                ),
+                "date": (
+                    row["created_at"].isoformat()
+                    if row["created_at"]
+                    else None
+                ),
                 "status": row["status"],
             }
         )
@@ -118,7 +148,11 @@ def get_dashboard_summary(db: Session):
     return {
         "total_transactions": total_transactions,
         "total_amount_spent": str(total_amount_spent),
-        "current_month_spending": str(current_month_spending),
-        "available_credit_limit": str(available_credit_limit),
+        "current_month_spending": str(
+            current_month_spending
+        ),
+        "available_credit_limit": str(
+            available_credit_limit
+        ),
         "last_5_transactions": last_5_transactions,
     }

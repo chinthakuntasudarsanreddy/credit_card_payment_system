@@ -1,9 +1,15 @@
+from decimal import Decimal
+
+from django.db.models import Sum
 from rest_framework import serializers
 
 from .models import Card
+from transactions.models import Transaction
 
 
 class CardSerializer(serializers.ModelSerializer):
+    available_credit = serializers.SerializerMethodField()
+
     class Meta:
         model = Card
         fields = (
@@ -14,22 +20,46 @@ class CardSerializer(serializers.ModelSerializer):
             "expiry_month",
             "expiry_year",
             "card_type",
+            "status",
+            "credit_limit",
+            "available_credit",
             "created_at",
             "updated_at",
         )
+
         read_only_fields = (
             "id",
             "masked_card_number",
             "last_four_digits",
+            "status",
+            "credit_limit",
+            "available_credit",
             "created_at",
             "updated_at",
         )
 
+    def get_available_credit(self, card):
+        successful_spending = (
+            Transaction.objects.filter(
+                card=card,
+                status="SUCCESS",
+                currency="INR",
+            ).aggregate(
+                total=Sum("amount")
+            )["total"]
+            or Decimal("0.00")
+        )
+
+        available = card.credit_limit - successful_spending
+
+        if available < Decimal("0.00"):
+            available = Decimal("0.00")
+
+        return available
+
 
 class AddCardSerializer(serializers.Serializer):
-    card_holder_name = serializers.CharField(
-        max_length=100,
-    )
+    card_holder_name = serializers.CharField(max_length=100)
 
     card_number = serializers.CharField(
         min_length=13,
@@ -48,7 +78,7 @@ class AddCardSerializer(serializers.Serializer):
     )
 
     card_type = serializers.ChoiceField(
-        choices=("credit", "debit"),
+        choices=("credit", "debit")
     )
 
     def validate_card_number(self, value):
@@ -70,8 +100,7 @@ class AddCardSerializer(serializers.Serializer):
         card_number = attrs["card_number"]
 
         attrs["masked_card_number"] = (
-            "**** **** **** "
-            + card_number[-4:]
+            "**** **** **** " + card_number[-4:]
         )
 
         attrs["last_four_digits"] = card_number[-4:]
@@ -83,22 +112,10 @@ class AddCardSerializer(serializers.Serializer):
 
         return Card.objects.create(
             user=self.context["request"].user,
-            card_holder_name=validated_data[
-                "card_holder_name"
-            ],
-            masked_card_number=validated_data[
-                "masked_card_number"
-            ],
-            last_four_digits=validated_data[
-                "last_four_digits"
-            ],
-            expiry_month=validated_data[
-                "expiry_month"
-            ],
-            expiry_year=validated_data[
-                "expiry_year"
-            ],
-            card_type=validated_data[
-                "card_type"
-            ],
+            card_holder_name=validated_data["card_holder_name"],
+            masked_card_number=validated_data["masked_card_number"],
+            last_four_digits=validated_data["last_four_digits"],
+            expiry_month=validated_data["expiry_month"],
+            expiry_year=validated_data["expiry_year"],
+            card_type=validated_data["card_type"],
         )
